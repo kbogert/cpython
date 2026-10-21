@@ -177,7 +177,7 @@ pub fn build(b: *std.Build) !void {
                 headers: []const std.Build.LazyPath,
             };
             const add_modules_make = struct {
-                fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
+                fn make(step: *std.Build.Step, options: std.Build.Step.StepOptions) anyerror!void {
                     _ = options;
                     const b2 = step.owner;
                     const self: *AddModules = @fieldParentPtr("step", step);
@@ -189,10 +189,9 @@ pub fn build(b: *std.Build) !void {
             const add_modules = b.allocator.create(AddModules) catch @panic("OOM");
             add_modules.* = .{
                 .step = std.Build.Step.init(.{
-                    .id = .custom,
+                    .tag = .run,
                     .name = "add modules to run deepfreeze.py",
                     .owner = b,
-                    .makeFn = &add_modules_make,
                 }),
                 .version = version,
                 .run_deepfreeze = run,
@@ -394,8 +393,11 @@ fn addMakesetup(
 }
 
 fn addReplaceModuleArgs(b: *std.Build, replace: *std.Build.Step.Run, comptime Modules: type, modules: Modules) void {
-    inline for (std.meta.fields(Modules)) |field| {
-        const name = field.name;
+    comptime switch (@typeInfo(Modules)) {
+        .@"struct" => {},
+        else => @compileError("Modules type must be a struct"),
+    };
+    inline for (@typeInfo(Modules).@"struct".field_names) |name| {
         const value = @field(modules, name);
         var upcase_buf: [100]u8 = undefined;
         for (name, 0..) |c, i| {
@@ -506,7 +508,7 @@ fn addPythonExe(
             module_compile_args_file: std.Build.LazyPath,
         };
         const add_modules_make = struct {
-            fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
+            fn make(step: *std.Build.Step, options: std.Build.Step.StepOptions) anyerror!void {
                 _ = options;
                 const io = step.owner.graph.io;
                 const self: *AddModules = @fieldParentPtr("step", step);
@@ -546,10 +548,9 @@ fn addPythonExe(
         const add_modules = b.allocator.create(AddModules) catch @panic("OOM");
         add_modules.* = .{
             .step = std.Build.Step.init(.{
-                .id = .custom,
+                .tag = .update_source_files,
                 .name = b.fmt("add module sources/includes to {s} exe", .{exe.name}),
                 .owner = b,
-                .makeFn = &add_modules_make,
             }),
             .upstream = upstream,
             .exe = exe,
@@ -862,10 +863,8 @@ fn addPyconfig(
         const run = b.addRunArtifact(configquery_exe);
         run.addArg("--zig-exe");
         run.addArg(b.graph.zig_exe);
-        if (b.cache_root.path) |cache_root| {
-            run.addArg("--cache-dir");
-            run.addArg(cache_root);
-        }
+        run.addArg("--cache-dir");
+        run.addDirectoryArg(std.Build.LazyPath.cache_root);
         run.addArg("-target");
         run.addArg(try target.query.zigTriple(b.allocator));
         run.addArg("-mcpu");

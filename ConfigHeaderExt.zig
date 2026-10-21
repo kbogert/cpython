@@ -7,10 +7,9 @@ pub fn addFile(config_header: *ConfigHeader, config_results: std.Build.LazyPath)
     const apply = b.allocator.create(ApplyConfigStep) catch @panic("OOM");
     apply.* = .{
         .step = std.Build.Step.init(.{
-            .id = .custom,
+            .tag = .config_header,
             .name = "add configuration from lazy path",
             .owner = b,
-            .makeFn = ApplyConfigStep.make,
         }),
         .config_header = config_header,
         .config_results = config_results,
