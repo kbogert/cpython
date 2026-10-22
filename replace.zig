@@ -1,22 +1,9 @@
 const std = @import("std");
 const Io = std.Io;
 
-pub fn main(init: std.process.Init) !void {
-    const arena = init.arena.allocator();
-    const all_args = try init.minimal.args.toSlice(arena);
-    const io = init.io;
-
-    if (all_args.len <= 1) {
-        var stderr = std.Io.File.stderr().writer(io, &.{});
-        try stderr.interface.writeAll("usage: replace IN_FILE OUT_FILE NAME=VALUE...\n");
-        std.process.exit(0xff);
-    }
-    const args = all_args[1..];
-    if (args.len < 2) errExit("expected at least 2 cmdline args but got {}", .{args.len});
-
-    const in_path = args[0];
-    const out_path = args[1];
-    const replacements = args[2..];
+pub fn replace(b: *std.Build, in_path: []const u8, out_path: []const u8, replacements: []const []const u8) void {
+    const arena = b.allocator;
+    const io = b.graph.io;
 
     var map: std.StringHashMapUnmanaged(MapNode) = .{};
     for (replacements) |r| {
@@ -24,20 +11,18 @@ pub fn main(init: std.process.Init) !void {
             "expected NAME=VALUE cmdline arg but got '{s}'",
             .{r},
         );
-        try map.put(arena, r[0..eq_index], .{ .count = 0, .value = r[eq_index + 1 ..] });
+        map.put(arena, r[0..eq_index], .{ .count = 0, .value = r[eq_index + 1 ..] }) catch @panic("OOM");
     }
 
     const in = std.Io.Dir.cwd().readFileAlloc(io, in_path, arena, .unlimited) catch |e|
         std.debug.panic("open '{s}' failed with {t}", .{ in_path, e });
 
-    var out_file = try std.Io.Dir.cwd().createFile(io, out_path, .{});
+    var out_file = std.Io.Dir.cwd().createFile(io, out_path, .{}) catch @panic("Cannot create outfile");
     defer out_file.close(io);
 
     var out_file_buf: [4096]u8 = undefined;
     var file_writer = out_file.writer(io, &out_file_buf);
-    writeFile(in_path, in, &map, &file_writer.interface) catch |err| switch (err) {
-        error.WriteFailed => return file_writer.err orelse error.Unexpected,
-    };
+    writeFile(in_path, in, &map, &file_writer.interface) catch |err| std.debug.panic("write to '{s}' failed with {t}", .{ out_path, err });
 
     var unused_count: usize = 0;
     var it = map.iterator();
