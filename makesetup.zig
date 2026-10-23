@@ -52,17 +52,6 @@ pub fn writeConfigC(
     return list.toOwnedSlice(alloc) catch @panic("OOM");
 }
 
-pub fn addCFiles(b: *std.Build, setup: Setup, module: std.Build.Module) void {
-    var it = setup.modules.iterator();
-    while (it.next()) |entry| {
-        const prefix: []const u8 = if (entry.value_ptr.enabled) "" else "# ";
-        for (entry.value_ptr.compile_args) |compile_arg| switch (compile_arg) {
-            .source => |src| module.addCSourceFile(b.fmt("{s}Modules/{s}\n", .{ prefix, src })),
-            .include => |inc| module.addIncludePath(b.fmt("{s}-I{s}\n", .{ prefix, inc })),
-        };
-    }
-}
-
 const CompileArg = union(enum) {
     source: []const u8,
     include: []const u8,
@@ -76,8 +65,9 @@ const Module = struct {
     compile_args: []const CompileArg,
     libs: []const []const u8,
 };
-const Setup = struct {
+pub const Setup = struct {
     modules: std.StringArrayHashMapUnmanaged(Module) = .{},
+    outfile: ?std.Build.LazyPath = null,
 };
 
 fn parseSetupFiles(arena: std.mem.Allocator, setup_files: []const []const u8, setup_files_src_paths: []const []const u8) !Setup {

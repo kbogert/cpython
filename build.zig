@@ -43,20 +43,13 @@ const Stage2FrozenMods = struct {
 pub fn build(b: *std.Build) !void {
     const version: Version = b.option(Version, "version", "Python Version") orelse .latest;
 
-    // const configquery_exe = b.addExecutable(.{
-    //     .name = "configquery",
-    //     .root_module = b.createModule(.{
-    //         .root_source_file = b.path("configquery.zig"),
-    //         .target = b.graph.host,
-    //     }),
-    // });
-    // const makesetup_exe = b.addExecutable(.{
-    //     .name = "makesetup",
-    //     .root_module = b.createModule(.{
-    //         .root_source_file = b.path("makesetup.zig"),
-    //         .target = b.graph.host,
-    //     }),
-    // });
+    const configquery_exe = b.addExecutable(.{
+        .name = "configquery",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("configquery.zig"),
+            .target = b.graph.host,
+        }),
+    });
 
     const upstream: *std.Build.Dependency = switch (version) {
         .@"3.11.13" => if (b.lazyDependency("upstream_3.11.13", .{})) |d| d else noUpstream(b),
@@ -88,132 +81,131 @@ pub fn build(b: *std.Build) !void {
     const makesetup_host = addMakesetup(b, version, upstream, libs_host, b.graph.host.result.os.tag);
     const makesetup_target = addMakesetup(b, version, upstream, libs_target, target.result.os.tag);
 
-    _ = makesetup_host;
-    _ = makesetup_target;
-    // const pyconfig_host = try addPyconfig(b, version, upstream, b.graph.host, .{ .zlib = null, .openssl = null }, configquery_exe);
+    const pyconfig_host = try addPyconfig(b, version, upstream, b.graph.host, .{ .zlib = null, .openssl = null }, configquery_exe);
 
-    // const freeze_module_exe = addPythonExe(b, upstream, b.graph.host, .Debug, .{
-    //     .name = "freeze_module",
-    //     .makesetup_out = makesetup_host,
-    //     .pyconfig = pyconfig_host,
-    //     .stage = .freeze_module,
-    // });
+    const freeze_module_exe = addPythonExe(b, upstream, b.graph.host, .Debug, .{
+        .name = "freeze_module",
+        .setup = makesetup_host,
+        .pyconfig = pyconfig_host,
+        .stage = .freeze_module,
+    });
 
-    // const stage2_frozen_mods: Stage2FrozenMods = .{
-    //     .getpath_h = blk: {
-    //         const freeze = b.addRunArtifact(freeze_module_exe);
-    //         freeze.addArg("getpath");
-    //         freeze.addFileArg(upstream.path("Modules/getpath.py"));
-    //         break :blk freeze.addOutputFileArg("Python/frozen_modules/getpath.h");
-    //     },
-    //     .importlib_bootstrap_h = blk: {
-    //         const freeze = b.addRunArtifact(freeze_module_exe);
-    //         freeze.addArg("importlib._bootstrap");
-    //         freeze.addFileArg(upstream.path("Lib/importlib/_bootstrap.py"));
-    //         break :blk freeze.addOutputFileArg("Python/frozen_modules/importlib._bootstrap.h");
-    //     },
-    //     .importlib_bootstrap_external_h = blk: {
-    //         const freeze = b.addRunArtifact(freeze_module_exe);
-    //         freeze.addArg("importlib._bootstrap_external");
-    //         freeze.addFileArg(upstream.path("Lib/importlib/_bootstrap_external.py"));
-    //         break :blk freeze.addOutputFileArg("Python/frozen_modules/importlib._bootstrap_external.h");
-    //     },
-    //     .zipimport_h = blk: {
-    //         const freeze = b.addRunArtifact(freeze_module_exe);
-    //         freeze.addArg("zipimport");
-    //         freeze.addFileArg(upstream.path("Lib/zipimport.py"));
-    //         break :blk freeze.addOutputFileArg("Python/frozen_modules/zipimport.h");
-    //     },
-    // };
+    const stage2_frozen_mods: Stage2FrozenMods = .{
+        .getpath_h = blk: {
+            const freeze = b.addRunArtifact(freeze_module_exe);
+            freeze.addArg("getpath");
+            freeze.addFileArg(upstream.path("Modules/getpath.py"));
+            break :blk freeze.addOutputFileArg("Python/frozen_modules/getpath.h");
+        },
+        .importlib_bootstrap_h = blk: {
+            const freeze = b.addRunArtifact(freeze_module_exe);
+            freeze.addArg("importlib._bootstrap");
+            freeze.addFileArg(upstream.path("Lib/importlib/_bootstrap.py"));
+            break :blk freeze.addOutputFileArg("Python/frozen_modules/importlib._bootstrap.h");
+        },
+        .importlib_bootstrap_external_h = blk: {
+            const freeze = b.addRunArtifact(freeze_module_exe);
+            freeze.addArg("importlib._bootstrap_external");
+            freeze.addFileArg(upstream.path("Lib/importlib/_bootstrap_external.py"));
+            break :blk freeze.addOutputFileArg("Python/frozen_modules/importlib._bootstrap_external.h");
+        },
+        .zipimport_h = blk: {
+            const freeze = b.addRunArtifact(freeze_module_exe);
+            freeze.addArg("zipimport");
+            freeze.addFileArg(upstream.path("Lib/zipimport.py"));
+            break :blk freeze.addOutputFileArg("Python/frozen_modules/zipimport.h");
+        },
+    };
 
-    // const frozen_headers, const deepfreeze_c = blk_deepfreeze_c: {
-    //     const bootstrap_python_exe = addPythonExe(b, upstream, b.graph.host, .Debug, .{
-    //         .name = "bootstrap_python",
-    //         .makesetup_out = makesetup_host,
-    //         .pyconfig = pyconfig_host,
-    //         .stage = .{ .bootstrap = stage2_frozen_mods },
-    //     });
-    //     const bootstrap_packaged = packagePython(b, version, upstream, bootstrap_python_exe);
+    const frozen_headers, const deepfreeze_c = blk_deepfreeze_c: {
+        const bootstrap_python_exe = addPythonExe(b, upstream, b.graph.host, .Debug, .{
+            .name = "bootstrap_python",
+            .setup = makesetup_host,
+            .pyconfig = pyconfig_host,
+            .stage = .{ .bootstrap = stage2_frozen_mods },
+        });
+        const bootstrap_packaged = packagePython(b, version, upstream, bootstrap_python_exe);
 
-    //     const frozen_headers = b.allocator.alloc(std.Build.LazyPath, frozen_modules.len) catch @panic("OOM");
-    //     // don't free
+        const frozen_headers = b.allocator.alloc(std.Build.LazyPath, frozen_modules.len) catch @panic("OOM");
+        // don't free
 
-    //     const freeze_step = b.step("freeze", "");
-    //     for (frozen_modules, frozenModuleNames(version), frozen_headers) |mod_path, mod_name, *header| {
-    //         const freeze = std.Build.Step.Run.create(b, b.fmt("run _freeze_module.py for '{s}'", .{mod_path}));
-    //         freeze.addFileArg(bootstrap_packaged.exe);
-    //         freeze.addFileArg(upstream.path("Programs/_freeze_module.py"));
-    //         freeze.addArg(mod_name);
-    //         freeze.addFileArg(upstream.path(mod_path));
-    //         header.* = freeze.addOutputFileArg(b.fmt("frozen_modules/{s}.h", .{mod_name}));
-    //         freeze_step.dependOn(&freeze.step);
-    //     }
+        const freeze_step = b.step("freeze", "");
+        for (frozen_modules, frozenModuleNames(version), frozen_headers) |mod_path, mod_name, *header| {
+            const freeze = std.Build.Step.Run.create(b, b.fmt("run _freeze_module.py for '{s}'", .{mod_path}));
+            freeze.addFileArg(bootstrap_packaged.exe);
+            freeze.addFileArg(upstream.path("Programs/_freeze_module.py"));
+            freeze.addArg(mod_name);
+            freeze.addFileArg(upstream.path(mod_path));
+            header.* = freeze.addOutputFileArg(b.fmt("frozen_modules/{s}.h", .{mod_name}));
+            freeze_step.dependOn(&freeze.step);
+        }
 
-    //     const run = std.Build.Step.Run.create(b, "run deepfreeze.py");
-    //     run.addFileArg(bootstrap_packaged.exe);
-    //     run.addFileArg(upstream.path(switch (version) {
-    //         .@"3.11.13" => "Tools/scripts/deepfreeze.py",
-    //         else => "Tools/build/deepfreeze.py",
-    //     }));
-    //     run.addArg("-o");
-    //     const deepfreeze_c = run.addOutputFileArg("deepfreeze.c");
-    //     {
-    //         // Need to create a custom step because std.Build.Step.Run doesn't
-    //         // have addSuffixedOutputArg.
-    //         const AddModules = struct {
-    //             step: std.Build.Step,
-    //             version: Version,
-    //             run_deepfreeze: *std.Build.Step.Run,
-    //             headers: []const std.Build.LazyPath,
-    //         };
-    //         const add_modules_make = struct {
-    //             fn make(step: *std.Build.Step, options: std.Build.Step.StepOptions) anyerror!void {
-    //                 _ = options;
-    //                 const b2 = step.owner;
-    //                 const self: *AddModules = @fieldParentPtr("step", step);
-    //                 for (frozenModuleNames(self.version), self.headers) |mod_name, header| {
-    //                     self.run_deepfreeze.addArg(b2.fmt("{s}:{s}", .{ header.getPath(b2), mod_name }));
-    //                 }
-    //             }
-    //         }.make;
-    //         const add_modules = b.allocator.create(AddModules) catch @panic("OOM");
-    //         add_modules.* = .{
-    //             .step = std.Build.Step.init(.{
-    //                 .tag = .run,
-    //                 .name = "add modules to run deepfreeze.py",
-    //                 .owner = b,
-    //             }),
-    //             .version = version,
-    //             .run_deepfreeze = run,
-    //             .headers = frozen_headers,
-    //         };
-    //         add_modules.step.dependOn(freeze_step);
-    //         run.step.dependOn(&add_modules.step);
-    //     }
+        const run = std.Build.Step.Run.create(b, "run deepfreeze.py");
+        run.addFileArg(bootstrap_packaged.exe);
+        run.addFileArg(upstream.path(switch (version) {
+            .@"3.11.13" => "Tools/scripts/deepfreeze.py",
+            else => "Tools/build/deepfreeze.py",
+        }));
+        run.addArg("-o");
+        const deepfreeze_c = run.addOutputFileArg("deepfreeze.c");
+        // {
+        //     // Need to create a custom step because std.Build.Step.Run doesn't
+        //     // have addSuffixedOutputArg.
+        //     const AddModules = struct {
+        //         step: std.Build.Step,
+        //         version: Version,
+        //         run_deepfreeze: *std.Build.Step.Run,
+        //         headers: []const std.Build.LazyPath,
+        //     };
+        //     const add_modules_make = struct {
+        //         fn make(step: *std.Build.Step, options: std.Build.Step.StepOptions) anyerror!void {
+        //             _ = options;
+        //             const b2 = step.owner;
+        //             const self: *AddModules = @fieldParentPtr("step", step);
+        //             for (frozenModuleNames(self.version), self.headers) |mod_name, header| {
+        //                 self.run_deepfreeze.addArg(b2.fmt("{s}:{s}", .{ header.getPath(b2), mod_name }));
+        //             }
+        //         }
+        //     }.make;
+        //     _ = add_modules_make;
+        //     const add_modules = b.allocator.create(AddModules) catch @panic("OOM");
+        //     add_modules.* = .{
+        //         .step = std.Build.Step.init(.{
+        //             .tag = .run,
+        //             .name = "add modules to run deepfreeze.py",
+        //             .owner = b,
+        //         }),
+        //         .version = version,
+        //         .run_deepfreeze = run,
+        //         .headers = frozen_headers,
+        //     };
+        //     add_modules.step.dependOn(freeze_step);
+        //     run.step.dependOn(&add_modules.step);
+        // }
 
-    //     b.step("deepfreeze", "").dependOn(&run.step);
-    //     break :blk_deepfreeze_c .{ frozen_headers, deepfreeze_c };
-    // };
+        b.step("deepfreeze", "").dependOn(&run.step);
+        break :blk_deepfreeze_c .{ frozen_headers, deepfreeze_c };
+    };
 
-    // const final_exe = addPythonExe(b, upstream, target, optimize, .{
-    //     .name = "python",
-    //     .makesetup_out = makesetup_target,
-    //     .pyconfig = try addPyconfig(b, version, upstream, target, libs_target, configquery_exe),
-    //     .stage = .{
-    //         .final = .{
-    //             .stage2 = stage2_frozen_mods,
-    //             .frozen_headers = frozen_headers,
-    //             .deepfreeze_c = deepfreeze_c,
-    //         },
-    //     },
-    // });
-    // const final_packaged = packagePython(b, version, upstream, final_exe);
-    // const install_final = b.addInstallDirectory(.{
-    //     .source_dir = final_packaged.root,
-    //     .install_dir = .prefix,
-    //     .install_subdir = "",
-    // });
-    // b.getInstallStep().dependOn(&install_final.step);
+    const final_exe = addPythonExe(b, upstream, target, optimize, .{
+        .name = "python",
+        .setup = makesetup_target,
+        .pyconfig = try addPyconfig(b, version, upstream, target, libs_target, configquery_exe),
+        .stage = .{
+            .final = .{
+                .stage2 = stage2_frozen_mods,
+                .frozen_headers = frozen_headers,
+                .deepfreeze_c = deepfreeze_c,
+            },
+        },
+    });
+    const final_packaged = packagePython(b, version, upstream, final_exe);
+    const install_final = b.addInstallDirectory(.{
+        .source_dir = final_packaged.root,
+        .install_dir = .prefix,
+        .install_subdir = "",
+    });
+    b.getInstallStep().dependOn(&install_final.step);
 
     // const ci_step = b.step("ci", "The build/test step to run on the CI");
     // ci_step.dependOn(b.getInstallStep());
@@ -239,7 +231,7 @@ fn addMakesetup(
     upstream: *std.Build.Dependency,
     libs: Libs,
     os_tag: std.Target.Os.Tag,
-) std.Build.LazyPath {
+) makesetup.Setup {
     const is_posix = (os_tag != .windows);
 
     const stdlib_modules_common = .{
@@ -379,7 +371,7 @@ fn addMakesetup(
 
     const setup_file = std.Io.Dir.cwd().readFileAlloc(b.graph.io, setup_in_path, b.allocator, .unlimited) catch |e|
         std.debug.panic("open '{s}' failed with {t}", .{ setup_in_path, e });
-    const setup = makesetup.makesetup(b, &.{ setup_bootstrap, setup_stdlib, setup_file }, &.{ bootstrap_in_path, stdlib_in_path, setup_in_path });
+    var setup = makesetup.makesetup(b, &.{ setup_bootstrap, setup_stdlib, setup_file }, &.{ bootstrap_in_path, stdlib_in_path, setup_in_path });
 
     const config_c_in_path = b.pathJoin(&.{ dep_root_path, "Modules/config.c.in" });
     b.dependOnFileContents(upstream.path("Modules/config.c.in"));
@@ -390,8 +382,9 @@ fn addMakesetup(
     const config_contents = makesetup.writeConfigC(b, setup, config_c_in_path, config_c_in);
     defer b.allocator.free(config_contents);
     const config_c = wf.add("Modules/config.c", config_contents);
+    setup.outfile = config_c;
 
-    return config_c;
+    return setup;
 }
 
 fn addReplacements(list: *std.ArrayList([]const u8), b: *std.Build, comptime Modules: type, modules: Modules) void {
@@ -437,7 +430,7 @@ fn addPythonExe(
     optimize: std.builtin.OptimizeMode,
     args: struct {
         name: []const u8,
-        makesetup_out: std.Build.LazyPath,
+        setup: makesetup.Setup,
         pyconfig: Pyconfig,
         stage: PythonExeStage,
     },
@@ -502,66 +495,17 @@ fn addPythonExe(
         "-DVPATH=\"\"",
     };
 
-    {
-        const AddModules = struct {
-            step: std.Build.Step,
-            upstream: *std.Build.Dependency,
-            exe: *std.Build.Step.Compile,
-            module_compile_args_file: std.Build.LazyPath,
-        };
-        const add_modules_make = struct {
-            fn make(step: *std.Build.Step, options: std.Build.Step.StepOptions) anyerror!void {
-                _ = options;
-                const io = step.owner.graph.io;
-                const self: *AddModules = @fieldParentPtr("step", step);
-                const file_path = self.module_compile_args_file.getPath2(step.owner, step);
-
-                const module_compile_args = try std.Io.Dir.cwd().readFileAlloc(io, file_path, step.owner.allocator, .unlimited);
-                defer step.owner.allocator.free(module_compile_args);
-
-                var files: std.ArrayList([]const u8) = .empty;
-                defer files.deinit(step.owner.allocator);
-
-                var line_it = std.mem.splitScalar(u8, module_compile_args, '\n');
-                while (line_it.next()) |line| {
-                    if (line.len == 0) continue;
-                    if (std.mem.startsWith(u8, line, "# ")) continue;
-                    if (std.mem.endsWith(u8, line, ".c")) {
-                        try files.append(step.owner.allocator, line);
-                    } else if (std.mem.startsWith(u8, line, "-I")) {
-                        const path = line[2..];
-                        const prefix = "$(srcdir)/";
-                        if (!std.mem.startsWith(u8, path, prefix)) std.debug.panic(
-                            "expected include path to start with '-I{s}' but got: '{s}'",
-                            .{ prefix, line },
-                        );
-                        const inc_sub_path = step.owner.dupe(path[prefix.len..]);
-                        self.exe.root_module.addIncludePath(self.upstream.path(inc_sub_path));
-                    } else std.debug.panic("todo: parse module-compile-args line '{s}'", .{line});
-                }
-
-                self.exe.root_module.addCSourceFiles(.{
-                    .root = self.upstream.path("."),
-                    .files = files.items,
+    var it = args.setup.modules.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.enabled) {
+            for (entry.value_ptr.compile_args) |compile_arg| switch (compile_arg) {
+                .source => |src| exe.root_module.addCSourceFile(.{
+                    .file = b.path(b.fmt("Modules/{s}", .{src})),
                     .flags = &flags_common,
-                });
-            }
-        }.make;
-
-        _ = add_modules_make;
-        const add_modules = b.allocator.create(AddModules) catch @panic("OOM");
-        add_modules.* = .{
-            .step = std.Build.Step.init(.{
-                .tag = .update_source_files,
-                .name = b.fmt("add module sources/includes to {s} exe", .{exe.name}),
-                .owner = b,
-            }),
-            .upstream = upstream,
-            .exe = exe,
-            .module_compile_args_file = args.makesetup_out.path(b, "module-compile-args.txt"),
-        };
-        add_modules.module_compile_args_file.addStepDependencies(&add_modules.step);
-        exe.step.dependOn(&add_modules.step);
+                }),
+                .include => |inc| exe.root_module.addIncludePath(b.path(b.fmt("{s}", .{inc}))),
+            };
+        }
     }
 
     exe.root_module.addCSourceFiles(.{
@@ -612,7 +556,7 @@ fn addPythonExe(
     });
 
     exe.root_module.addCSourceFile(.{
-        .file = args.makesetup_out.path(b, "config.c"),
+        .file = args.setup.outfile orelse @panic("Missing config.c file"),
         .flags = &flags_common,
     });
 
