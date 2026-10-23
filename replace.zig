@@ -1,7 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 
-pub fn replace(b: *std.Build, in_path: []const u8, out_path: []const u8, replacements: []const []const u8) void {
+pub fn replace(b: *std.Build, in_path: []const u8, replacements: []const []const u8) []const u8 {
     const arena = b.allocator;
     const io = b.graph.io;
 
@@ -17,12 +17,7 @@ pub fn replace(b: *std.Build, in_path: []const u8, out_path: []const u8, replace
     const in = std.Io.Dir.cwd().readFileAlloc(io, in_path, arena, .unlimited) catch |e|
         std.debug.panic("open '{s}' failed with {t}", .{ in_path, e });
 
-    var out_file = std.Io.Dir.cwd().createFile(io, out_path, .{}) catch @panic("Cannot create outfile");
-    defer out_file.close(io);
-
-    var out_file_buf: [4096]u8 = undefined;
-    var file_writer = out_file.writer(io, &out_file_buf);
-    writeFile(in_path, in, &map, &file_writer.interface) catch |err| std.debug.panic("write to '{s}' failed with {t}", .{ out_path, err });
+    const returnval = writeFile(in_path, in, &map, b) catch |err| std.debug.panic("replace failed with {t}", .{err});
 
     var unused_count: usize = 0;
     var it = map.iterator();
@@ -36,6 +31,8 @@ pub fn replace(b: *std.Build, in_path: []const u8, out_path: []const u8, replace
         std.log.err("{} unused variable(s), the did not appear in template '{s}'", .{ unused_count, in_path });
         std.process.exit(0xff);
     }
+
+    return returnval;
 }
 
 const MapNode = struct {
@@ -47,13 +44,17 @@ fn writeFile(
     in_path: []const u8,
     in: []const u8,
     map: *const std.StringHashMapUnmanaged(MapNode),
-    writer: *std.Io.Writer,
-) error{WriteFailed}!void {
+    b: *std.Build,
+) ![]const u8 {
+    const alloc = b.allocator;
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(b.allocator);
+
     var missing_count: usize = 0;
     var offset: usize = 0;
     while (true) {
         const at_index = std.mem.indexOfScalarPos(u8, in, offset, '@') orelse break;
-        try writer.writeAll(in[offset..at_index]);
+        try list.appendSlice(alloc, in[offset..at_index]);
         const end = std.mem.indexOfScalarPos(u8, in, at_index + 1, '@') orelse errExit(
             "{s}: unterminated '@' at offset {}",
             .{ in_path, at_index },
@@ -61,17 +62,16 @@ fn writeFile(
         const name = in[at_index + 1 .. end];
         if (map.getEntry(name)) |entry| {
             entry.value_ptr.count += 1;
-            try writer.writeAll(entry.value_ptr.value);
+            try list.appendSlice(alloc, entry.value_ptr.value);
         } else {
             std.log.err("undefined variable '{s}'", .{name});
-            try writer.print("MISSING_VAR_{s}", .{name});
+            try list.appendSlice(alloc, b.fmt("MISSING_VAR_{s}", .{name}));
             missing_count += 1;
         }
         offset = end + 1;
     }
-    try writer.writeAll(in[offset..]);
-    try writer.flush();
     if (missing_count > 0) errExit("{} missing variable(s) for template '{s}'", .{ missing_count, in_path });
+    return list.toOwnedSlice(alloc);
 }
 
 fn errExit(comptime fmt: []const u8, args: anytype) noreturn {

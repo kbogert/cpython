@@ -63,6 +63,8 @@ pub fn build(b: *std.Build) !void {
         .@"3.12.11" => if (b.lazyDependency("upstream_3.12.11", .{})) |d| d else noUpstream(b),
     };
 
+    if (b.graph.unlazy_deps.count() > 0) return;
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -344,12 +346,13 @@ fn addMakesetup(
 
     const dep_root_path = upstream.builder.root.root_dir.path orelse ".";
     const bootstrap_in_path = b.pathJoin(&.{ dep_root_path, "Modules/Setup.bootstrap.in" });
-    const bootstrap_out_path = b.pathJoin(&.{ dep_root_path, "Modules/Setup.bootstrap" });
+    b.dependOnFileContents(upstream.path("Modules/Setup.bootstrap.in"));
 
-    replace.replace(b, bootstrap_in_path, bootstrap_out_path, &.{
+    // First replace call
+    const setup_bootstrap = replace.replace(b, bootstrap_in_path, &.{
         b.fmt("MODULE_PWD_TRUE={s}", .{value_str}),
     });
-    b.dependOnFileContents(upstream.path("Modules/Setup.bootstrap"));
+    defer b.allocator.free(setup_bootstrap);
 
     var replacements: std.ArrayList([]const u8) = .empty;
     defer replacements.deinit(b.allocator);
@@ -365,20 +368,30 @@ fn addMakesetup(
         },
     }
 
+    // Second replace call
     const stdlib_in_path = b.pathJoin(&.{ dep_root_path, "Modules/Setup.stdlib.in" });
-    const stdlib_out_path = b.pathJoin(&.{ dep_root_path, "Modules/Setup.stdlib" });
-    replace.replace(b, stdlib_in_path, stdlib_out_path, replacements.items);
-    b.dependOnFileContents(upstream.path("Modules/Setup.stdlib"));
+    b.dependOnFileContents(upstream.path("Modules/Setup.stdlib.in"));
+    const setup_stdlib = replace.replace(b, stdlib_in_path, replacements.items);
+    defer b.allocator.free(setup_stdlib);
 
-    // const generate = b.addRunArtifact(args.makesetup_exe);
-    // generate.addDirectoryArg(upstream.path("."));
-    // const makesetup_out = generate.addOutputDirectoryArg("gen");
-    // generate.addFileArg(setup_bootstrap);
-    // generate.addFileArg(setup_stdlib);
-    // generate.addFileArg(upstream.path("Modules/Setup"));
-    // return makesetup_out;
+    const setup_in_path = b.pathJoin(&.{ dep_root_path, "Modules/Setup" });
+    b.dependOnFileContents(upstream.path("Modules/Setup"));
 
-    return b.path(".");
+    const setup_file = std.Io.Dir.cwd().readFileAlloc(b.graph.io, setup_in_path, b.allocator, .unlimited) catch |e|
+        std.debug.panic("open '{s}' failed with {t}", .{ setup_in_path, e });
+    const setup = makesetup.makesetup(b, &.{ setup_bootstrap, setup_stdlib, setup_file }, &.{ bootstrap_in_path, stdlib_in_path, setup_in_path });
+
+    const config_c_in_path = b.pathJoin(&.{ dep_root_path, "Modules/config.c.in" });
+    b.dependOnFileContents(upstream.path("Modules/config.c.in"));
+    const config_c_in = std.Io.Dir.cwd().readFileAlloc(b.graph.io, config_c_in_path, b.allocator, .unlimited) catch |e|
+        std.debug.panic("open file '{s}' failed with {t}", .{ config_c_in_path, e });
+
+    const wf = b.addWriteFiles();
+    const config_contents = makesetup.writeConfigC(b, setup, config_c_in_path, config_c_in);
+    defer b.allocator.free(config_contents);
+    const config_c = wf.add("Modules/config.c", config_contents);
+
+    return config_c;
 }
 
 fn addReplacements(list: *std.ArrayList([]const u8), b: *std.Build, comptime Modules: type, modules: Modules) void {
@@ -1172,14 +1185,14 @@ fn ci(
                 .optimize = optimize,
             })) |dep| dep.artifact("openssl") else null) else null,
         };
-        const makesetup = addMakesetup(b, version, upstream, libs, .{
+        const makesetups = addMakesetup(b, version, upstream, libs, .{
             .os_tag = target.result.os.tag,
             .replace_exe = args.replace_exe,
             .makesetup_exe = args.makesetup_exe,
         });
         const exe = addPythonExe(b, upstream, target, optimize, .{
             .name = "python",
-            .makesetup_out = makesetup,
+            .makesetup_out = makesetups,
             .pyconfig = try addPyconfig(b, version, upstream, target, libs, args.configquery_exe),
             .stage = .{ .final = .{
                 .stage2 = args.stage2_frozen_mods,
@@ -1214,3 +1227,4 @@ fn concat(allocator: std.mem.Allocator, lists: []const []const []const u8) []con
 const std = @import("std");
 const ConfigHeaderExt = @import("ConfigHeaderExt.zig");
 const replace = @import("replace.zig");
+const makesetup = @import("makesetup.zig");

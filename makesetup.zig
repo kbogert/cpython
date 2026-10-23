@@ -4,96 +4,63 @@ const print = std.debug.print;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const Allocator = std.mem.Allocator;
 
-pub fn main(init: std.process.Init) !void {
-    const arena = init.arena.allocator();
-    const all_args = try init.minimal.args.toSlice(arena);
-    const io = init.io;
+pub fn makesetup(b: *std.Build, setup_files: []const []const u8, setup_files_src_paths: []const []const u8) Setup {
+    const arena = b.allocator;
+    const setup = try parseSetupFiles(arena, setup_files, setup_files_src_paths);
 
-    if (all_args.len <= 1) {
-        var stderr = std.Io.File.stderr().writer(io, &.{});
-        try stderr.interface.writeAll("usage: makesetup UPSTREAM_SRC OUT_DIR SETUP_FILES...\n");
-        std.process.exit(0xff);
-    }
-    const args = all_args[1..];
-    if (args.len < 3) errExit("expected at least 3 cmdline args but got {}", .{args.len});
+    return setup;
 
-    const upstream_src = args[0];
-    const out_path = args[1];
-    const setup_files = args[2..];
-
-    const setup = try parseSetupFiles(arena, io, setup_files);
-
-    const config_in_path = std.Io.Dir.path.join(arena, &.{ upstream_src, "Modules", "config.c.in" }) catch |e| oom(e);
-    const config_in = std.Io.Dir.cwd().readFileAlloc(io, config_in_path, arena, .unlimited) catch |e|
-        std.debug.panic("open file '{s}' failed with {t}", .{ config_in_path, e });
-
-    var out_dir = try std.Io.Dir.cwd().createDirPathOpen(io, out_path, .{});
-    defer out_dir.close(io);
-
-    {
-        var file = try out_dir.createFile(io, "config.c", .{});
-        defer file.close(io);
-        var out_file_buf: [4096]u8 = undefined;
-        var file_writer = file.writer(io, &out_file_buf);
-        writeConfigC(setup, config_in_path, config_in, &file_writer.interface) catch |err| switch (err) {
-            error.WriteFailed => return file_writer.err orelse error.Unexpected,
-        };
-    }
-
-    {
-        var out_file = try out_dir.createFile(io, "module-compile-args.txt", .{});
-        defer out_file.close(io);
-        var out_file_buf: [4096]u8 = undefined;
-        var file_writer = out_file.writer(io, &out_file_buf);
-        writeCompileArgs(setup, &file_writer.interface) catch |err| switch (err) {
-            error.WriteFailed => return file_writer.err orelse error.Unexpected,
-        };
-    }
+    // {
+    //     var out_file = try out_dir.createFile(io, "module-compile-args.txt", .{});
+    //     defer out_file.close(io);
+    //     var out_file_buf: [4096]u8 = undefined;
+    //     var file_writer = out_file.writer(io, &out_file_buf);
+    //     writeCompileArgs(setup, &file_writer.interface) catch |err| switch (err) {
+    //         error.WriteFailed => return file_writer.err orelse error.Unexpected,
+    //     };
+    // }
 }
 
-fn writeConfigC(
+pub fn writeConfigC(
+    b: *std.Build,
     setup: Setup,
     config_in_path: []const u8,
     config_in: []const u8,
-    writer: *std.Io.Writer,
-) error{WriteFailed}!void {
-    try writer.print("/* Generated automatically from {s} by makesetup. */\n", .{config_in_path});
+) []const u8 {
+    const alloc = b.allocator;
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(alloc);
+
+    list.appendSlice(alloc, b.fmt("/* Generated automatically from {s} by makesetup. */\n", .{config_in_path})) catch @panic("OOM");
     var lines = std.mem.splitScalar(u8, config_in, '\n');
     while (lines.next()) |line| {
         if (std.mem.indexOf(u8, line, "MARKER 1")) |_| {
             var it = setup.modules.iterator();
             while (it.next()) |entry| {
                 if (!entry.value_ptr.enabled) continue;
-                try writer.print("extern PyObject* PyInit_{s}(void);\n", .{entry.key_ptr.*});
+                list.appendSlice(alloc, b.fmt("extern PyObject* PyInit_{s}(void);\n", .{entry.key_ptr.*})) catch @panic("OOM");
             }
         } else if (std.mem.indexOf(u8, line, "MARKER 2")) |_| {
             var it = setup.modules.iterator();
             while (it.next()) |entry| {
                 if (!entry.value_ptr.enabled) continue;
-                try writer.print("    {{\"{s}\", PyInit_{0s}}},\n", .{entry.key_ptr.*});
+                list.appendSlice(alloc, b.fmt("    {{\"{s}\", PyInit_{0s}}},\n", .{entry.key_ptr.*})) catch @panic("OOM");
             }
         }
-        try writer.writeAll(line);
-        try writer.writeByte('\n');
+        list.append(alloc, '\n') catch @panic("OOM");
     }
-    try writer.flush();
+    return list.toOwnedSlice(alloc) catch @panic("OOM");
 }
 
-fn writeCompileArgs(setup: Setup, writer: *std.Io.Writer) error{WriteFailed}!void {
+pub fn addCFiles(b: *std.Build, setup: Setup, module: std.Build.Module) void {
     var it = setup.modules.iterator();
     while (it.next()) |entry| {
-        const module_name = entry.key_ptr.*;
-        {
-            const suffix: []const u8 = if (entry.value_ptr.enabled) "" else " (DISABLED)";
-            try writer.print("# Module '{s}'{s}\n", .{ module_name, suffix });
-        }
         const prefix: []const u8 = if (entry.value_ptr.enabled) "" else "# ";
         for (entry.value_ptr.compile_args) |compile_arg| switch (compile_arg) {
-            .source => |src| try writer.print("{s}Modules/{s}\n", .{ prefix, src }),
-            .include => |inc| try writer.print("{s}-I{s}\n", .{ prefix, inc }),
+            .source => |src| module.addCSourceFile(b.fmt("{s}Modules/{s}\n", .{ prefix, src })),
+            .include => |inc| module.addIncludePath(b.fmt("{s}-I{s}\n", .{ prefix, inc })),
         };
     }
-    try writer.flush();
 }
 
 const CompileArg = union(enum) {
@@ -113,11 +80,9 @@ const Setup = struct {
     modules: std.StringArrayHashMapUnmanaged(Module) = .{},
 };
 
-fn parseSetupFiles(arena: std.mem.Allocator, io: Io, setup_files: []const []const u8) !Setup {
+fn parseSetupFiles(arena: std.mem.Allocator, setup_files: []const []const u8, setup_files_src_paths: []const []const u8) !Setup {
     var setup: Setup = .{};
-    for (setup_files) |file_path| {
-        const content = std.Io.Dir.cwd().readFileAlloc(io, file_path, arena, .unlimited) catch |e|
-            std.debug.panic("open '{s}' failed with {t}", .{ file_path, e });
+    for (setup_files, setup_files_src_paths) |content, file_path| {
         try parseSetupFile(arena, &setup, file_path, content);
     }
     return setup;
