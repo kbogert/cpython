@@ -500,10 +500,10 @@ fn addPythonExe(
         if (entry.value_ptr.enabled) {
             for (entry.value_ptr.compile_args) |compile_arg| switch (compile_arg) {
                 .source => |src| exe.root_module.addCSourceFile(.{
-                    .file = b.path(b.fmt("Modules/{s}", .{src})),
+                    .file = upstream.path(b.fmt("Modules/{s}", .{src})),
                     .flags = &flags_common,
                 }),
-                .include => |inc| exe.root_module.addIncludePath(b.path(b.fmt("{s}", .{inc}))),
+                .include => |inc| exe.root_module.addIncludePath(upstream.path(b.fmt("{s}", .{inc}))),
             };
         }
     }
