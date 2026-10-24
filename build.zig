@@ -144,42 +144,6 @@ pub fn build(b: *std.Build) !void {
             const mod_name_part = b.fmt(":{s}", .{ mod_name });
             run.addFileArg2(header, .{.suffix = mod_name_part});
         }
-
-        // {
-        //     // Need to create a custom step because std.Build.Step.Run doesn't
-        //     // have addSuffixedOutputArg.
-        //     const AddModules = struct {
-        //         step: std.Build.Step,
-        //         version: Version,
-        //         run_deepfreeze: *std.Build.Step.Run,
-        //         headers: []const std.Build.LazyPath,
-        //     };
-        //     const add_modules_make = struct {
-        //         fn make(step: *std.Build.Step, options: std.Build.Step.StepOptions) anyerror!void {
-        //             _ = options;
-        //             const b2 = step.owner;
-        //             const self: *AddModules = @fieldParentPtr("step", step);
-        //             for (frozenModuleNames(self.version), self.headers) |mod_name, header| {
-        //                 self.run_deepfreeze.addArg(b2.fmt("{s}:{s}", .{ header.getPath(b2), mod_name }));
-        //             }
-        //         }
-        //     }.make;
-        //     _ = add_modules_make;
-        //     const add_modules = b.allocator.create(AddModules) catch @panic("OOM");
-        //     add_modules.* = .{
-        //         .step = std.Build.Step.init(.{
-        //             .tag = .run,
-        //             .name = "add modules to run deepfreeze.py",
-        //             .owner = b,
-        //         }),
-        //         .version = version,
-        //         .run_deepfreeze = run,
-        //         .headers = frozen_headers,
-        //     };
-        //     add_modules.step.dependOn(freeze_step);
-        //     run.step.dependOn(&add_modules.step);
-        // }
-
         b.step("deepfreeze", "").dependOn(&run.step);
         break :blk_deepfreeze_c .{ frozen_headers, deepfreeze_c };
     };
@@ -204,16 +168,13 @@ pub fn build(b: *std.Build) !void {
     });
     b.getInstallStep().dependOn(&install_final.step);
 
-    // const ci_step = b.step("ci", "The build/test step to run on the CI");
-    // ci_step.dependOn(b.getInstallStep());
-    // try ci(b, version, ssl_enabled, upstream, ci_step, .{
-    //     .replace_exe = replace_exe,
-    //     .makesetup_exe = makesetup_exe,
-    //     .configquery_exe = configquery_exe,
-    //     .stage2_frozen_mods = stage2_frozen_mods,
-    //     .frozen_headers = frozen_headers,
-    //     .deepfreeze_c = deepfreeze_c,
-    // });
+    const ci_step = b.step("ci", "The build/test step to run on the CI");
+    ci_step.dependOn(b.getInstallStep());
+    try ci(b, version, ssl_enabled, upstream, ci_step, .{
+        .stage2_frozen_mods = stage2_frozen_mods,
+        .frozen_headers = frozen_headers,
+        .deepfreeze_c = deepfreeze_c,
+    });
 }
 
 fn noUpstream(b: *std.Build) *std.Build.Dependency {
@@ -1081,9 +1042,6 @@ fn ci(
     upstream: *std.Build.Dependency,
     ci_step: *std.Build.Step,
     args: struct {
-        replace_exe: *std.Build.Step.Compile,
-        makesetup_exe: *std.Build.Step.Compile,
-        configquery_exe: *std.Build.Step.Compile,
         stage2_frozen_mods: Stage2FrozenMods,
         frozen_headers: []const std.Build.LazyPath,
         deepfreeze_c: std.Build.LazyPath,
@@ -1129,15 +1087,11 @@ fn ci(
                 .optimize = optimize,
             })) |dep| dep.artifact("openssl") else null) else null,
         };
-        const makesetups = addMakesetup(b, version, upstream, libs, .{
-            .os_tag = target.result.os.tag,
-            .replace_exe = args.replace_exe,
-            .makesetup_exe = args.makesetup_exe,
-        });
+        const makesetups = addMakesetup(b, version, upstream, libs, target.result.os.tag);
         const exe = addPythonExe(b, upstream, target, optimize, .{
             .name = "python",
-            .makesetup_out = makesetups,
-            .pyconfig = try addPyconfig(b, version, upstream, target, libs, args.configquery_exe),
+            .setup = makesetups,
+            .pyconfig = try addPyconfig(b, version, upstream, target, libs),
             .stage = .{ .final = .{
                 .stage2 = args.stage2_frozen_mods,
                 .frozen_headers = args.frozen_headers,
