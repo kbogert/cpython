@@ -143,7 +143,7 @@ fn parseSetupFile(
                 if (std.mem.startsWith(u8, part, "#")) {
                     break;
                 } else if (std.mem.endsWith(u8, part, ".c")) {
-                    compile_args.append(arena, .{ .source = part }) catch |e| oom(e);
+                    compile_args.append(arena, .{ .source = arena.dupe(u8, part) catch |e| oom(e) }) catch |e| oom(e);
                 } else if (std.mem.endsWith(u8, part, ".a")) {
                     libraries.append(arena, part) catch |e| oom(e);
                 } else if (std.mem.startsWith(u8, part, "-D")) {
@@ -151,7 +151,7 @@ fn parseSetupFile(
                     defines.append(arena, part[2..]) catch |e| oom(e);
                 } else if (std.mem.startsWith(u8, part, "-I")) {
                     if (part.len == 2) errExit("{s}:{}: expected '-IPATH' but just got '-I'", .{ file_path, lineno });
-                    compile_args.append(arena, .{ .include = part[2..] }) catch |e| oom(e);
+                    compile_args.append(arena, .{ .include = arena.dupe(u8, part[2..]) catch |e| oom(e) }) catch |e| oom(e);
                 } else if (std.mem.startsWith(u8, part, "-l")) {
                     if (part.len == 2) errExit("{s}:{}: expected '-lLIB' but just got '-l'", .{ file_path, lineno });
                     libs.append(arena, part[2..]) catch |e| oom(e);
