@@ -43,20 +43,12 @@ const Stage2FrozenMods = struct {
 pub fn build(b: *std.Build) !void {
     const version: Version = b.option(Version, "version", "Python Version") orelse .latest;
 
-    const configquery_exe = b.addExecutable(.{
-        .name = "configquery",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("configquery.zig"),
-            .target = b.graph.host,
-        }),
-    });
-
     const upstream: *std.Build.Dependency = switch (version) {
         .@"3.11.13" => if (b.lazyDependency("upstream_3.11.13", .{})) |d| d else noUpstream(b),
         .@"3.12.11" => if (b.lazyDependency("upstream_3.12.11", .{})) |d| d else noUpstream(b),
     };
 
-    if (b.graph.unlazy_deps.count() > 0) return;
+    if (b.graph.needed_lazy_dependencies.count() > 0) return;
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -81,7 +73,7 @@ pub fn build(b: *std.Build) !void {
     const makesetup_host = addMakesetup(b, version, upstream, libs_host, b.graph.host.result.os.tag);
     const makesetup_target = addMakesetup(b, version, upstream, libs_target, target.result.os.tag);
 
-    const pyconfig_host = try addPyconfig(b, version, upstream, b.graph.host, .{ .zlib = null, .openssl = null }, configquery_exe);
+    const pyconfig_host = try addPyconfig(b, version, upstream, b.graph.host, .{ .zlib = null, .openssl = null });
 
     const freeze_module_exe = addPythonExe(b, upstream, b.graph.host, .Debug, .{
         .name = "freeze_module",
@@ -190,7 +182,7 @@ pub fn build(b: *std.Build) !void {
     const final_exe = addPythonExe(b, upstream, target, optimize, .{
         .name = "python",
         .setup = makesetup_target,
-        .pyconfig = try addPyconfig(b, version, upstream, target, libs_target, configquery_exe),
+        .pyconfig = try addPyconfig(b, version, upstream, target, libs_target),
         .stage = .{
             .final = .{
                 .stage2 = stage2_frozen_mods,
@@ -621,14 +613,7 @@ const Libs = struct {
     openssl: ?*std.Build.Step.Compile,
 };
 
-fn addPyconfig(
-    b: *std.Build,
-    version: Version,
-    upstream: *std.Build.Dependency,
-    target: std.Build.ResolvedTarget,
-    libs: Libs,
-    configquery_exe: *std.Build.Step.Compile,
-) !Pyconfig {
+fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency, target: std.Build.ResolvedTarget, libs: Libs) !Pyconfig {
     const t = target.result;
     if (t.os.tag == .windows) return .{
         .version = version,
@@ -808,24 +793,31 @@ fn addPyconfig(
     }
 
     {
-        const run = b.addRunArtifact(configquery_exe);
-        run.addArg("--zig-exe");
-        run.addArg(b.graph.zig_exe);
-        run.addArg("--cache-dir");
-        run.addDirectoryArg(std.Build.LazyPath.cache_root);
-        run.addArg("-target");
-        run.addArg(try target.query.zigTriple(b.allocator));
-        run.addArg("-mcpu");
-        run.addArg(try target.query.serializeCpuAlloc(b.allocator));
-        if (libs.zlib) |zlib| run.addPrefixedDirectoryArg("-I", zlib.getEmittedIncludeTree());
-        if (libs.openssl) |openssl| run.addPrefixedDirectoryArg("-I", openssl.getEmittedIncludeTree());
-        run.addFileArg(b.path("config-common"));
-        run.addFileArg(switch (version) {
-            .@"3.11.13" => b.path("config-3.11.13"),
-            .@"3.12.11" => b.path("config-3.12.11"),
-        });
-        run.addArg("-o");
-        ConfigHeaderExt.addFile(config_header, run.addOutputFileArg("config"));
+        var configquery_config: configquery.Config = .{};
+        configquery_config.zig_exe = b.graph.zig_exe;
+        configquery_config.target_triple = try target.query.zigTriple(b.allocator);
+        configquery_config.mcpu = try target.query.serializeCpuAlloc(b.allocator);
+
+        const vers_config_file = switch (version) {
+            .@"3.11.13" => "config-3.11.13",
+            .@"3.12.11" => "config-3.12.11",
+        };
+        b.dependOnFileContents(b.path(vers_config_file));
+
+        const build_root = b.root.root_dir.path orelse ".";
+
+        const vers_file_path = b.pathJoin(&.{ build_root, vers_config_file });
+
+        const config_common_path = b.pathJoin(&.{ build_root, "config-common" });
+        b.dependOnFileContents(b.path("config-common"));
+
+        try configquery.resolveQueries(b, &.{ config_common_path, vers_file_path }, config_header, configquery_config);
+
+        // hardcode for now
+        if (libs.zlib) |_| config_header.values.put(b.allocator, "HAVE_ZLIB_COPY", .{ .int = 1 }) catch @panic("OOM");
+
+        //        if (libs.openssl) |openssl| try configquery_config.include_dirs.append(b.allocator, openssl.getEmittedIncludeTree());
+
     }
 
     return .{
@@ -1169,6 +1161,6 @@ fn concat(allocator: std.mem.Allocator, lists: []const []const []const u8) []con
 }
 
 const std = @import("std");
-const ConfigHeaderExt = @import("ConfigHeaderExt.zig");
 const replace = @import("replace.zig");
 const makesetup = @import("makesetup.zig");
+const configquery = @import("configquery.zig");

@@ -1,87 +1,12 @@
-pub fn main(init: std.process.Init) !void {
-    const arena = init.arena.allocator();
-    const io = init.io;
-
-    var template_files: std.ArrayList([]const u8) = .empty;
-    var output_path: ?[]const u8 = null;
-    var config: Config = .{};
-
-    {
-        var args = try init.minimal.args.iterateAllocator(arena);
-        _ = args.next();
-        while (args.next()) |arg| {
-            if (std.mem.eql(u8, arg, "-o")) {
-                output_path = args.next() orelse fatal("-o requires an argument", .{});
-            } else if (std.mem.eql(u8, arg, "--zig-exe")) {
-                config.zig_exe = args.next() orelse fatal("--zig-exe requires an argument", .{});
-            } else if (std.mem.eql(u8, arg, "--cache-dir")) {
-                config.cache_dir = args.next() orelse fatal("--cache-dir requires an argument", .{});
-            } else if (std.mem.eql(u8, arg, "-target")) {
-                config.target_triple = args.next() orelse fatal("-target requires an argument", .{});
-            } else if (std.mem.eql(u8, arg, "-mcpu")) {
-                config.mcpu = args.next() orelse fatal("-mcpu requires an argument", .{});
-            } else if (std.mem.startsWith(u8, arg, "-I")) {
-                config.include_dirs.append(arena, arg) catch |e| oom(e);
-            } else {
-                template_files.append(arena, arg) catch |e| oom(e);
-            }
-        }
-    }
-
-    if (template_files.items.len == 0) {
-        const usage =
-            \\Usage: configquery [options] [template-files]
-            \\
-            \\Processes template files line by line. Lines starting with # are
-            \\comments. Each line is NAME VALUE where VALUE is either a literal
-            \\or a query starting with ?.
-            \\
-            \\Options:
-            \\  -o <path>                 Write output to file (default: stdout)
-            \\  --zig-exe [exe]           Path to zig executable (for compile queries)
-            \\  -target [name]            <arch><sub>-<os>-<abi> see the targets command
-            \\  -mcpu [cpu]               Specify target CPU and feature set
-            \\  -I[dir]                   Add directory to include search path
-            \\  --cache-dir [path]        The local cache directory
-            \\
-            \\Literal Values
-            \\  SIZEOF_INT 4
-            \\  RETSIGTYPE .void
-            \\  PY_HASH "md5,sha1"
-            \\  HAVE_FEATURE defined
-            \\  MISSING_FEATURE undef
-            \\
-            \\Query syntax: NAME ? PASS|FAIL [define=DEF,...] [include=HDR,...] [COMPILE_BODY]
-            \\
-            \\  HAVE_ALLOCA_H ? 1|undef include=alloca.h
-            \\  HAVE_FORK ? 1|undef include=unistd.h int main(){fork();}
-            \\  HAVE_PRLIMIT ? 1|undef include=sys/time.h,sys/resource.h int main(){prlimit(0,0,0,0);}
-            \\  HAVE_CLOSE_RANGE ? 1|undef define=_GNU_SOURCE include=unistd.h int main(){close_range(0,0,0);}
-            \\
-            \\configquery is purposely limited to compile-only (no link). Its up to the caller to ensure
-            \\header/symbol availability matches library symbol availability.
-            \\
-        ;
-        var stderr = std.Io.File.stderr().writer(io, &.{});
-        stderr.interface.writeAll(usage) catch return stderr.err.?;
-        stderr.interface.flush() catch return stderr.err.?;
-        std.process.exit(1);
-    }
-
-    var out_buf: [4096]u8 = undefined;
-    var out_file = if (output_path) |path| std.Io.Dir.cwd().createFile(io, path, .{}) catch |err| fatal(
-        "failed to create '{s}' with {t}",
-        .{ path, err },
-    ) else std.Io.File.stdout();
-    defer if (output_path != null) out_file.close(io);
-    var out_writer = out_file.writer(io, &out_buf);
-    const out = &out_writer.interface;
+pub fn resolveQueries(b: *std.Build, template_files: []const []const u8, config_header: *ConfigHeader, config: Config) !void {
+    const arena = b.allocator;
+    const io = b.graph.io;
 
     var queries: std.ArrayList(Query) = .empty;
     var name_set: std.StringHashMapUnmanaged(u32) = .empty;
     var error_count: u32 = 0;
 
-    for (template_files.items) |template_path| {
+    for (template_files) |template_path| {
         const content = std.Io.Dir.cwd().readFileAlloc(io, template_path, arena, .unlimited) catch |err| fatal(
             "failed to read '{s}' with {t}",
             .{ template_path, err },
@@ -98,7 +23,12 @@ pub fn main(init: std.process.Init) !void {
                 },
                 .literal => |lit| {
                     checkUnique(arena, &name_set, io, template_path, line_num, lit.config_name, &error_count);
-                    out.print("{s} {s}\n", .{ lit.config_name, lit.value_str }) catch return out_writer.err.?;
+                    if (parseValue(lit.value_str)) |entry| {
+                        config_header.values.put(b.allocator, lit.config_name, entry) catch @panic("OOM");
+                    } else {
+                        error_count += 1;
+                        reportError(io, template_path, line_num, "{s} '{s}'", .{ lit.config_name, line_untrimmed });
+                    }
                 },
                 .query => |input| {
                     checkUnique(arena, &name_set, io, template_path, line_num, input.config_name, &error_count);
@@ -109,7 +39,7 @@ pub fn main(init: std.process.Init) !void {
                             .line_num = line_num,
                         }) catch |e| oom(e);
                     } else {
-                        out.print("{s} {s}\n", .{ input.config_name, input.pass_text }) catch return out_writer.err.?;
+                        config_header.values.put(b.allocator, input.config_name, .{ .string = input.pass_text }) catch @panic("OOM");
                     }
                 },
             }
@@ -119,13 +49,12 @@ pub fn main(init: std.process.Init) !void {
     if (error_count > 0) fatal("{} errors in config templates", .{error_count});
 
     if (queries.items.len > 0) {
-        const zig_exe = config.zig_exe orelse fatal("compile query requires --zig-exe", .{});
-        const cache_dir = config.cache_dir orelse fatal("compile query requires --cache-dir", .{});
+        const zig_exe = config.zig_exe orelse fatal("compile query requires zig-exe", .{});
         const argv_template = buildArgvTemplate(arena, zig_exe, &config);
 
         var group: std.Io.Group = .init;
         for (queries.items, 0..) |*q, i| {
-            group.async(io, runCompileCheck, .{ arena, io, q, argv_template, cache_dir, i });
+            group.async(io, runCompileCheck, .{ arena, io, q, argv_template, i });
         }
         group.await(io) catch |err| switch (err) {
             error.Canceled => fatal("canceled", .{}),
@@ -133,22 +62,30 @@ pub fn main(init: std.process.Init) !void {
 
         for (queries.items) |*q| {
             const result = q.result orelse fatal("compile query for '{s}' has no result", .{q.input.config_name});
-            const value_text = if (result.success) q.input.pass_text else q.input.fail_text;
-            out.print("{s}{s} {s}\n", .{ result.error_comments, q.input.config_name, value_text }) catch return out_writer.err.?;
             if (result.fatal_msg) |msg| {
                 error_count += 1;
                 reportError(io, q.file_path, q.line_num, "{s}", .{msg});
+            } else {
+                const value_text = if (result.success) q.input.pass_text else q.input.fail_text;
+
+                if (parseValue(value_text)) |entry| {
+                    config_header.values.put(b.allocator, q.input.config_name, entry) catch @panic("OOM");
+                } else {
+                    error_count += 1;
+                    reportError(io, q.file_path, q.line_num, "{s} '{s}'", .{ q.input.config_name, value_text });
+                }
+                if (result.error_comments.len > 0) {
+                    std.log.debug("{s}{s} {s} : {s}\n", .{ result.error_comments, q.input.config_name, q.input.pass_text, q.input.fail_text });
+                }
             }
         }
     }
 
-    out.flush() catch return out_writer.err.?;
     if (error_count > 0) fatal("{} errors", .{error_count});
 }
 
-const Config = struct {
+pub const Config = struct {
     zig_exe: ?[]const u8 = null,
-    cache_dir: ?[]const u8 = null,
     target_triple: ?[]const u8 = null,
     mcpu: ?[]const u8 = null,
     include_dirs: std.ArrayList([]const u8) = .empty,
@@ -185,6 +122,17 @@ const Query = struct {
     };
 };
 
+pub fn parseValue(str: []const u8) ?ConfigHeader.Value {
+    if (std.mem.eql(u8, str, "undef")) return .undef;
+    if (std.mem.eql(u8, str, "defined")) return .defined;
+    if (std.mem.eql(u8, str, "false")) return .{ .boolean = false };
+    if (std.mem.eql(u8, str, "true")) return .{ .boolean = true };
+    if (std.fmt.parseInt(i64, str, 10)) |int| return .{ .int = int } else |_| {}
+    if (std.mem.startsWith(u8, str, ":")) return .{ .ident = str[1..] };
+    if (str.len >= 2 and str[0] == '"' and str[str.len - 1] == '"') return .{ .string = str[1 .. str.len - 1] };
+    return null;
+}
+
 fn parseLine(line_untrimmed: []const u8) Line {
     const line = std.mem.trim(u8, line_untrimmed, &std.ascii.whitespace);
     if (line.len == 0 or line[0] == '#') return .skip;
@@ -194,18 +142,18 @@ fn parseLine(line_untrimmed: []const u8) Line {
     const value_str = std.mem.trimStart(u8, line[first_space + 1 ..], " ");
 
     if (!std.mem.startsWith(u8, value_str, "?")) {
-        _ = ConfigHeaderExt.parseValue(value_str) orelse
+        _ = parseValue(value_str) orelse
             return .{ .err = "invalid config value" };
         return .{ .literal = .{ .config_name = config_name, .value_str = value_str } };
     }
 
     const pass_str, const after_pass = scanConfigValue(value_str, 1);
-    _ = ConfigHeaderExt.parseValue(pass_str) orelse return .{ .err = "expected PASS_VALUE after ?" };
+    _ = parseValue(pass_str) orelse return .{ .err = "expected PASS_VALUE after ?" };
     const pipe_index = skipWhitespace(value_str, after_pass);
     if (pipe_index >= value_str.len or value_str[pipe_index] != '|')
         return .{ .err = "expected '|' after PASS_VALUE" };
     const fail_str, const after_fail = scanConfigValue(value_str, pipe_index + 1);
-    _ = ConfigHeaderExt.parseValue(fail_str) orelse return .{ .err = "expected FAIL_VALUE after '|'" };
+    _ = parseValue(fail_str) orelse return .{ .err = "expected FAIL_VALUE after '|'" };
     var rest = std.mem.trimStart(u8, value_str[after_fail..], " ");
     const defines = parseExprClause(&rest, "define=");
     const includes = parseExprClause(&rest, "include=");
@@ -302,10 +250,9 @@ fn runCompileCheck(
     io: std.Io,
     query: *Query,
     argv_template: []const []const u8,
-    cache_dir: []const u8,
     index: usize,
 ) void {
-    query.result = doCompileCheck(arena, io, query, argv_template, cache_dir, index);
+    query.result = doCompileCheck(arena, io, query, argv_template, index);
 }
 
 fn doCompileCheck(
@@ -313,7 +260,6 @@ fn doCompileCheck(
     io: std.Io,
     query: *const Query,
     argv_template: []const []const u8,
-    cache_dir: []const u8,
     index: usize,
 ) Query.Result {
     const sep = std.fs.path.sep_str;
@@ -324,7 +270,9 @@ fn doCompileCheck(
         else => @compileError("unsupported OS"),
     };
     var task_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const task_dir = std.fmt.bufPrint(&task_dir_buf, "{s}" ++ sep ++ "tmp" ++ sep ++ "cq-{}-{}", .{ cache_dir, pid, index }) catch
+    const base_dir = ".";
+
+    const task_dir = std.fmt.bufPrint(&task_dir_buf, "{s}" ++ sep ++ "tmp" ++ sep ++ "cq-{}-{}", .{ base_dir, pid, index }) catch
         fatal("cache-dir path too long", .{});
     std.Io.Dir.cwd().createDirPath(io, task_dir) catch |err|
         fatal("failed to create '{s}': {t}", .{ task_dir, err });
@@ -346,8 +294,6 @@ fn doCompileCheck(
     const argv = blk: {
         var a = std.ArrayList([]const u8).initCapacity(arena, argv_template.len + 3) catch |e| oom(e);
         a.appendSliceAssumeCapacity(argv_template);
-        a.appendAssumeCapacity("--cache-dir");
-        a.appendAssumeCapacity(task_dir);
         a.appendAssumeCapacity(source_path);
         break :blk a.items;
     };
@@ -513,3 +459,5 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
 
 const std = @import("std");
 const ConfigHeaderExt = @import("ConfigHeaderExt.zig");
+const ConfigHeader = std.Build.Step.ConfigHeader;
+const LazyPath = std.Build.LazyPath;
