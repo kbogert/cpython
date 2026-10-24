@@ -140,6 +140,10 @@ pub fn build(b: *std.Build) !void {
         }));
         run.addArg("-o");
         const deepfreeze_c = run.addOutputFileArg("deepfreeze.c");
+        for (frozenModuleNames(version), frozen_headers) |mod_name, header| {
+            run.addArg(b.fmt("{f}:{s}", .{ header, mod_name }));
+        }
+
         // {
         //     // Need to create a custom step because std.Build.Step.Run doesn't
         //     // have addSuffixedOutputArg.
@@ -814,7 +818,10 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
         try configquery.resolveQueries(b, &.{ config_common_path, vers_file_path }, config_header, configquery_config);
 
         // hardcode for now
-        if (libs.zlib) |_| config_header.values.put(b.allocator, "HAVE_ZLIB_COPY", .{ .int = 1 }) catch @panic("OOM");
+        if (libs.zlib) |_| {
+            config_header.values.put(b.allocator, "HAVE_ZLIB_COPY", .{ .int = 1 }) catch @panic("OOM");
+            config_header.values.put(b.allocator, "HAVE_ZLIB_H", .{ .int = 1 }) catch @panic("OOM");
+        }
 
         //        if (libs.openssl) |openssl| try configquery_config.include_dirs.append(b.allocator, openssl.getEmittedIncludeTree());
 
