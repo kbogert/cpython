@@ -141,7 +141,8 @@ pub fn build(b: *std.Build) !void {
         run.addArg("-o");
         const deepfreeze_c = run.addOutputFileArg("deepfreeze.c");
         for (frozenModuleNames(version), frozen_headers) |mod_name, header| {
-            run.addArg(b.fmt("{f}:{s}", .{ header, mod_name }));
+            const mod_name_part = b.fmt(":{s}", .{ mod_name });
+            run.addFileArg2(header, .{.suffix = mod_name_part});
         }
 
         // {
