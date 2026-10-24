@@ -47,6 +47,7 @@ pub fn writeConfigC(
                 list.appendSlice(alloc, b.fmt("    {{\"{s}\", PyInit_{0s}}},\n", .{entry.key_ptr.*})) catch @panic("OOM");
             }
         }
+        list.appendSlice(alloc, line) catch @panic("OOM");
         list.append(alloc, '\n') catch @panic("OOM");
     }
     return list.toOwnedSlice(alloc) catch @panic("OOM");
