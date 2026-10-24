@@ -50,8 +50,6 @@ pub fn build(b: *std.Build) !void {
         .@"3.12.11" => if (b.lazyDependency("upstream_3.12.11", .{})) |d| d else noUpstream(b),
     };
 
-    if (b.graph.needed_lazy_dependencies.count() > 0) return;
-
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -71,6 +69,8 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         })) |dep| dep.artifact("openssl") else null) else null,
     };
+
+    if (b.graph.needed_lazy_dependencies.count() > 0) return;
 
     const makesetup_host = addMakesetup(b, version, upstream, libs_host, b.graph.host.result.os.tag);
     const makesetup_target = addMakesetup(b, version, upstream, libs_target, target.result.os.tag);
@@ -143,8 +143,8 @@ pub fn build(b: *std.Build) !void {
         run.addArg("-o");
         const deepfreeze_c = run.addOutputFileArg("deepfreeze.c");
         for (frozenModuleNames(version), frozen_headers) |mod_name, header| {
-            const mod_name_part = b.fmt(":{s}", .{ mod_name });
-            run.addFileArg2(header, .{.suffix = mod_name_part});
+            const mod_name_part = b.fmt(":{s}", .{mod_name});
+            run.addFileArg2(header, .{ .suffix = mod_name_part });
         }
         b.step("deepfreeze", "").dependOn(&run.step);
         break :blk_deepfreeze_c .{ frozen_headers, deepfreeze_c };
