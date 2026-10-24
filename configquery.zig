@@ -270,7 +270,7 @@ fn doCompileCheck(
         else => @compileError("unsupported OS"),
     };
     var task_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const base_dir = ".";
+    const base_dir = "."; // TODO: Need a reliable temporary directory instead of the build path to place the test programs
 
     const task_dir = std.fmt.bufPrint(&task_dir_buf, "{s}" ++ sep ++ "tmp" ++ sep ++ "cq-{}-{}", .{ base_dir, pid, index }) catch
         fatal("cache-dir path too long", .{});

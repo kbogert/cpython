@@ -779,12 +779,13 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
 
         try configquery.resolveQueries(b, &.{ config_common_path, vers_file_path }, config_header, configquery_config);
 
-        // hardcode for now
+        // TODO: Hardcode for now, need a configure accessible path to a dependency's upstream's include paths
         if (libs.zlib) |_| {
             config_header.values.put(b.allocator, "HAVE_ZLIB_COPY", .{ .int = 1 }) catch @panic("OOM");
             config_header.values.put(b.allocator, "HAVE_ZLIB_H", .{ .int = 1 }) catch @panic("OOM");
         }
 
+        // TODO: OpenSSL doesn't impact the configure?
         //        if (libs.openssl) |openssl| try configquery_config.include_dirs.append(b.allocator, openssl.getEmittedIncludeTree());
 
     }
