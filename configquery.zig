@@ -1,4 +1,4 @@
-pub fn resolveQueries(b: *std.Build, template_files: []const []const u8, config_header: *ConfigHeader, config: Config) !void {
+pub fn resolveQueries(b: *std.Build, template_files: []const []const u8, config_header: *ConfigHeader, config: Config, log_error_comments: bool) !void {
     const arena = b.allocator;
     const io = b.graph.io;
 
@@ -74,7 +74,7 @@ pub fn resolveQueries(b: *std.Build, template_files: []const []const u8, config_
                     error_count += 1;
                     reportError(io, q.file_path, q.line_num, "{s} '{s}'", .{ q.input.config_name, value_text });
                 }
-                if (result.error_comments.len > 0) {
+                if (result.error_comments.len > 0 and log_error_comments) {
                     std.log.debug("{s}{s} {s} : {s}\n", .{ result.error_comments, q.input.config_name, q.input.pass_text, q.input.fail_text });
                 }
             }

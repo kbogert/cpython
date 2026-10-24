@@ -43,6 +43,8 @@ const Stage2FrozenMods = struct {
 pub fn build(b: *std.Build) !void {
     const version: Version = b.option(Version, "version", "Python Version") orelse .latest;
 
+    const log_error_comments = b.option(bool, "log_error_comments", "Log compile errors during config query") orelse false;
+
     const upstream: *std.Build.Dependency = switch (version) {
         .@"3.11.13" => if (b.lazyDependency("upstream_3.11.13", .{})) |d| d else noUpstream(b),
         .@"3.12.11" => if (b.lazyDependency("upstream_3.12.11", .{})) |d| d else noUpstream(b),
@@ -73,7 +75,7 @@ pub fn build(b: *std.Build) !void {
     const makesetup_host = addMakesetup(b, version, upstream, libs_host, b.graph.host.result.os.tag);
     const makesetup_target = addMakesetup(b, version, upstream, libs_target, target.result.os.tag);
 
-    const pyconfig_host = try addPyconfig(b, version, upstream, b.graph.host, .{ .zlib = null, .openssl = null });
+    const pyconfig_host = try addPyconfig(b, version, upstream, b.graph.host, .{ .zlib = null, .openssl = null }, log_error_comments);
 
     const freeze_module_exe = addPythonExe(b, upstream, b.graph.host, .Debug, .{
         .name = "freeze_module",
@@ -151,7 +153,7 @@ pub fn build(b: *std.Build) !void {
     const final_exe = addPythonExe(b, upstream, target, optimize, .{
         .name = "python",
         .setup = makesetup_target,
-        .pyconfig = try addPyconfig(b, version, upstream, target, libs_target),
+        .pyconfig = try addPyconfig(b, version, upstream, target, libs_target, log_error_comments),
         .stage = .{
             .final = .{
                 .stage2 = stage2_frozen_mods,
@@ -174,7 +176,7 @@ pub fn build(b: *std.Build) !void {
         .stage2_frozen_mods = stage2_frozen_mods,
         .frozen_headers = frozen_headers,
         .deepfreeze_c = deepfreeze_c,
-    });
+    }, log_error_comments);
 }
 
 fn noUpstream(b: *std.Build) *std.Build.Dependency {
@@ -579,7 +581,7 @@ const Libs = struct {
     openssl: ?*std.Build.Step.Compile,
 };
 
-fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency, target: std.Build.ResolvedTarget, libs: Libs) !Pyconfig {
+fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency, target: std.Build.ResolvedTarget, libs: Libs, log_error_comments: bool) !Pyconfig {
     const t = target.result;
     if (t.os.tag == .windows) return .{
         .version = version,
@@ -777,7 +779,7 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
         const config_common_path = b.pathJoin(&.{ build_root, "config-common" });
         b.dependOnFileContents(b.path("config-common"));
 
-        try configquery.resolveQueries(b, &.{ config_common_path, vers_file_path }, config_header, configquery_config);
+        try configquery.resolveQueries(b, &.{ config_common_path, vers_file_path }, config_header, configquery_config, log_error_comments);
 
         // TODO: Hardcode for now, need a configure accessible path to a dependency's upstream's include paths
         if (libs.zlib) |_| {
@@ -1047,6 +1049,7 @@ fn ci(
         frozen_headers: []const std.Build.LazyPath,
         deepfreeze_c: std.Build.LazyPath,
     },
+    log_error_comments: bool,
 ) !void {
     const CiTarget = struct { triple: []const u8, ssl: bool };
     const ci_targets = [_]CiTarget{
@@ -1092,7 +1095,7 @@ fn ci(
         const exe = addPythonExe(b, upstream, target, optimize, .{
             .name = "python",
             .setup = makesetups,
-            .pyconfig = try addPyconfig(b, version, upstream, target, libs),
+            .pyconfig = try addPyconfig(b, version, upstream, target, libs, log_error_comments),
             .stage = .{ .final = .{
                 .stage2 = args.stage2_frozen_mods,
                 .frozen_headers = args.frozen_headers,
