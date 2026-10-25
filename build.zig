@@ -78,7 +78,7 @@ pub fn build(b: *std.Build) !void {
         b.installArtifact(hacl.?);
     } else hacl = null;
 
-    const libs_host: Libs = .{ .zlib = null, .openssl = null, .hacl = hacl };
+    const libs_host: Libs = .{ .zlib = null, .openssl = null, .hacl = null };
     const libs_target: Libs = .{
         .zlib = (b.dependency("zlib", .{
             .target = target,
@@ -309,7 +309,7 @@ fn addMakesetup(
     };
     const @"stdlib_modules_3.12.11" = .{
         ._ctypes = false,
-        ._sha2 = true,
+        ._sha2 = (libs.hacl != null),
         .xxsubtype = false,
         ._xxinterpchannels = false,
     };
