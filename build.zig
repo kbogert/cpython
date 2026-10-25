@@ -58,7 +58,27 @@ pub fn build(b: *std.Build) !void {
         else => true,
     };
 
-    const libs_host: Libs = .{ .zlib = null, .openssl = null };
+    var hacl: ?*std.Build.Step.Compile = undefined;
+    if (version == .@"3.12.11") {
+        hacl = b.addLibrary(.{
+            .name = "hacl",
+            .linkage = .static,
+            .root_module = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
+        });
+        hacl.?.root_module.addIncludePath(upstream.path("./Modules/_hacl/include"));
+        hacl.?.root_module.addIncludePath(upstream.path("./Modules/_hacl/"));
+        hacl.?.root_module.addCSourceFile(.{ .file = upstream.path("./Modules/_hacl/Hacl_Hash_SHA2.c"), .flags = &.{
+            "-D_BSD_SOURCE", "-D_DEFAULT_SOURCE",   "-fwrapv",
+            "-std=c11",      "-fvisibility=hidden", "-DVPATH=\"\"",
+        } });
+        b.installArtifact(hacl.?);
+    } else hacl = null;
+
+    const libs_host: Libs = .{ .zlib = null, .openssl = null, .hacl = hacl };
     const libs_target: Libs = .{
         .zlib = (b.dependency("zlib", .{
             .target = target,
@@ -68,6 +88,7 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
         })) |dep| dep.artifact("openssl") else null) else null,
+        .hacl = hacl,
     };
 
     if (b.graph.needed_lazy_dependencies.count() > 0) return;
@@ -75,7 +96,7 @@ pub fn build(b: *std.Build) !void {
     const makesetup_host = addMakesetup(b, version, upstream, libs_host, b.graph.host.result.os.tag);
     const makesetup_target = addMakesetup(b, version, upstream, libs_target, target.result.os.tag);
 
-    const pyconfig_host = try addPyconfig(b, version, upstream, b.graph.host, .{ .zlib = null, .openssl = null }, log_error_comments);
+    const pyconfig_host = try addPyconfig(b, version, upstream, b.graph.host, libs_host, log_error_comments);
 
     const freeze_module_exe = addPythonExe(b, upstream, b.graph.host, .Debug, .{
         .name = "freeze_module",
@@ -288,7 +309,7 @@ fn addMakesetup(
     };
     const @"stdlib_modules_3.12.11" = .{
         ._ctypes = false,
-        ._sha2 = false,
+        ._sha2 = true,
         .xxsubtype = false,
         ._xxinterpchannels = false,
     };
@@ -555,6 +576,7 @@ fn addPythonExe(
 
     if (args.pyconfig.libs.zlib) |zlib| exe.root_module.linkLibrary(zlib);
     if (args.pyconfig.libs.openssl) |openssl| exe.root_module.linkLibrary(openssl);
+    if (args.pyconfig.libs.hacl) |hacl| exe.root_module.linkLibrary(hacl);
 
     if (target.result.os.tag == .windows) {
         exe.root_module.linkSystemLibrary("ws2_32", .{});
@@ -579,6 +601,7 @@ const Pyconfig = struct {
 const Libs = struct {
     zlib: ?*std.Build.Step.Compile,
     openssl: ?*std.Build.Step.Compile,
+    hacl: ?*std.Build.Step.Compile,
 };
 
 fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency, target: std.Build.ResolvedTarget, libs: Libs, log_error_comments: bool) !Pyconfig {
@@ -1081,6 +1104,26 @@ fn ci(
         const install = b.step(b.fmt("install-{s}", .{ci_target.triple}), "");
         ci_step.dependOn(install);
 
+        var hacl: ?*std.Build.Step.Compile = undefined;
+        if (version == .@"3.12.11") {
+            hacl = b.addLibrary(.{
+                .name = "hacl",
+                .linkage = .static,
+                .root_module = b.createModule(.{
+                    .target = target,
+                    .optimize = optimize,
+                    .link_libc = true,
+                }),
+            });
+            hacl.?.root_module.addIncludePath(upstream.path("./Modules/_hacl/include"));
+            hacl.?.root_module.addIncludePath(upstream.path("./Modules/_hacl/"));
+            hacl.?.root_module.addCSourceFile(.{ .file = upstream.path("./Modules/_hacl/Hacl_Hash_SHA2.c"), .flags = &.{
+                "-D_BSD_SOURCE", "-D_DEFAULT_SOURCE",   "-fwrapv",
+                "-std=c11",      "-fvisibility=hidden", "-DVPATH=\"\"",
+            } });
+            b.installArtifact(hacl.?);
+        } else hacl = null;
+
         const libs: Libs = .{
             .zlib = (b.dependency("zlib", .{
                 .target = target,
@@ -1090,6 +1133,7 @@ fn ci(
                 .target = target,
                 .optimize = optimize,
             })) |dep| dep.artifact("openssl") else null) else null,
+            .hacl = hacl,
         };
         const makesetups = addMakesetup(b, version, upstream, libs, target.result.os.tag);
         const exe = addPythonExe(b, upstream, target, optimize, .{
