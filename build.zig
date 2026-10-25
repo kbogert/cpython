@@ -474,6 +474,7 @@ fn addPythonExe(
         "-std=c11",
         "-fvisibility=hidden",
         "-DVPATH=\"\"",
+        "-DABIFLAGS=\"\"",
     };
 
     var it = args.setup.modules.iterator();
@@ -814,6 +815,23 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
         //        if (libs.openssl) |openssl| try configquery_config.include_dirs.append(b.allocator, openssl.getEmittedIncludeTree());
 
     }
+
+    const sysconfigdata_contents = makesetup.writeSysConfigData(b, config_header);
+    defer b.allocator.free(sysconfigdata_contents);
+
+    const sysconfigdata_filename = b.fmt("_sysconfigdata__{s}_.py", .{
+        switch (t.os.tag) {
+            .linux => "linux",
+            .macos => "darwin",
+            .windows => "win32",
+            else => std.debug.panic("todo: populate PLATFORM for os '{s}'", .{@tagName(t.os.tag)}),
+        }
+    });
+
+    const wf = b.addWriteFiles();
+    const sysconfigdata_file = wf.add(sysconfigdata_filename, sysconfigdata_contents);
+    const install_step = b.addInstallFile(sysconfigdata_file, b.fmt("lib/python{s}/{s}", .{version.libName(), sysconfigdata_filename}));
+    b.getInstallStep().dependOn(&install_step.step);
 
     return .{
         .version = version,

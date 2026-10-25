@@ -246,3 +246,20 @@ fn errExit(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);
     std.process.exit(0xff);
 }
+
+pub fn writeSysConfigData(b: *std.Build, configheader: *std.Build.Step.ConfigHeader) [] const u8 {
+
+    _ = configheader;
+
+    const alloc = b.allocator;
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(alloc);
+
+    list.appendSlice(alloc, "build_time_vars = {'ABIFLAGS': ''")  catch @panic("OOM");
+
+    // TODO: Output the values of the config header in a python format
+
+    list.appendSlice(alloc, "}\n") catch @panic("OOM");
+
+    return list.toOwnedSlice(alloc) catch @panic("OOM");
+}
