@@ -139,7 +139,7 @@ pub fn build(b: *std.Build) !void {
             .pyconfig = pyconfig_host,
             .stage = .{ .bootstrap = stage2_frozen_mods },
         });
-        const bootstrap_packaged = packagePython(b, version, upstream, bootstrap_python_exe);
+        const bootstrap_packaged = packagePython(b, version, upstream, bootstrap_python_exe, &.{});
 
         const frozen_headers = b.allocator.alloc(std.Build.LazyPath, frozen_modules.len) catch @panic("OOM");
         // don't free
@@ -171,10 +171,11 @@ pub fn build(b: *std.Build) !void {
         break :blk_deepfreeze_c .{ frozen_headers, deepfreeze_c };
     };
 
+    const final_pyconfig = try addPyconfig(b, version, upstream, target, libs_target, log_error_comments);
     const final_exe = addPythonExe(b, upstream, target, optimize, .{
         .name = "python",
         .setup = makesetup_target,
-        .pyconfig = try addPyconfig(b, version, upstream, target, libs_target, log_error_comments),
+        .pyconfig = final_pyconfig,
         .stage = .{
             .final = .{
                 .stage2 = stage2_frozen_mods,
@@ -183,7 +184,7 @@ pub fn build(b: *std.Build) !void {
             },
         },
     });
-    const final_packaged = packagePython(b, version, upstream, final_exe);
+    const final_packaged = packagePython(b, version, upstream, final_exe, &.{ final_pyconfig.sysconfigdata.? });
     const install_final = b.addInstallDirectory(.{
         .source_dir = final_packaged.root,
         .install_dir = .prefix,
@@ -384,17 +385,26 @@ fn addReplacements(list: *std.ArrayList([]const u8), b: *std.Build, comptime Mod
     }
 }
 
-fn packagePython(b: *std.Build, version: Version, upstream: *std.Build.Dependency, exe: *std.Build.Step.Compile) struct {
+const other_libs = struct {
+    path: std.Build.LazyPath,
+    name: []const u8,
+};
+
+fn packagePython(b: *std.Build, version: Version, upstream: *std.Build.Dependency, exe: *std.Build.Step.Compile, libs: []const other_libs) struct {
     root: std.Build.LazyPath,
     exe: std.Build.LazyPath,
 } {
     const write_files = b.addNamedWriteFiles(exe.name);
     _ = write_files.addCopyDirectory(upstream.path("Lib"), b.fmt("lib/python{s}", .{version.libName()}), .{});
+    for (libs) |lib| {
+        _ = write_files.addCopyFile(lib.path, b.fmt("lib/python{s}/{s}", .{version.libName(), lib.name}));
+    }
     const empty_dir = b.addWriteFiles().getDirectory();
     _ = write_files.addCopyDirectory(empty_dir, b.fmt("lib/python{s}/lib-dynload", .{version.libName()}), .{});
     if (exe.producesPdbFile()) {
         _ = write_files.addCopyFile(exe.getEmittedPdb(), b.fmt("bin/{s}.pdb", .{exe.name}));
     }
+     b.getInstallStep().dependOn(&write_files.step);   
     return .{
         .root = write_files.getDirectory(),
         .exe = write_files.addCopyFile(
@@ -597,6 +607,7 @@ const Pyconfig = struct {
         path: std.Build.LazyPath,
         config_header: *std.Build.Step.ConfigHeader,
     },
+    sysconfigdata: ?other_libs,
 };
 
 const Libs = struct {
@@ -611,6 +622,7 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
         .version = version,
         .libs = libs,
         .header = .{ .path = upstream.path("PC/pyconfig.h") },
+        .sysconfigdata = null,
     };
 
     const config_header = b.addConfigHeader(.{
@@ -830,13 +842,12 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
 
     const wf = b.addWriteFiles();
     const sysconfigdata_file = wf.add(sysconfigdata_filename, sysconfigdata_contents);
-    const install_step = b.addInstallFile(sysconfigdata_file, b.fmt("lib/python{s}/{s}", .{version.libName(), sysconfigdata_filename}));
-    b.getInstallStep().dependOn(&install_step.step);
 
     return .{
         .version = version,
         .libs = libs,
         .header = .{ .config_header = config_header },
+        .sysconfigdata = .{.path =sysconfigdata_file, .name=sysconfigdata_filename},
     };
 }
 
