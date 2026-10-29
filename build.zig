@@ -184,7 +184,7 @@ pub fn build(b: *std.Build) !void {
             },
         },
     });
-    const final_packaged = packagePython(b, version, upstream, final_exe, &.{ final_pyconfig.sysconfigdata.? });
+    const final_packaged = packagePython(b, version, upstream, final_exe, &.{final_pyconfig.sysconfigdata.?});
     const install_final = b.addInstallDirectory(.{
         .source_dir = final_packaged.root,
         .install_dir = .prefix,
@@ -397,14 +397,14 @@ fn packagePython(b: *std.Build, version: Version, upstream: *std.Build.Dependenc
     const write_files = b.addNamedWriteFiles(exe.name);
     _ = write_files.addCopyDirectory(upstream.path("Lib"), b.fmt("lib/python{s}", .{version.libName()}), .{});
     for (libs) |lib| {
-        _ = write_files.addCopyFile(lib.path, b.fmt("lib/python{s}/{s}", .{version.libName(), lib.name}));
+        _ = write_files.addCopyFile(lib.path, b.fmt("lib/python{s}/{s}", .{ version.libName(), lib.name }));
     }
     const empty_dir = b.addWriteFiles().getDirectory();
     _ = write_files.addCopyDirectory(empty_dir, b.fmt("lib/python{s}/lib-dynload", .{version.libName()}), .{});
     if (exe.producesPdbFile()) {
         _ = write_files.addCopyFile(exe.getEmittedPdb(), b.fmt("bin/{s}.pdb", .{exe.name}));
     }
-     b.getInstallStep().dependOn(&write_files.step);   
+    b.getInstallStep().dependOn(&write_files.step);
     return .{
         .root = write_files.getDirectory(),
         .exe = write_files.addCopyFile(
@@ -485,6 +485,7 @@ fn addPythonExe(
         "-fvisibility=hidden",
         "-DVPATH=\"\"",
         "-DABIFLAGS=\"\"",
+        "-fno-sanitize=function",
     };
 
     var it = args.setup.modules.iterator();
@@ -831,14 +832,12 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
     const sysconfigdata_contents = makesetup.writeSysConfigData(b, config_header);
     defer b.allocator.free(sysconfigdata_contents);
 
-    const sysconfigdata_filename = b.fmt("_sysconfigdata__{s}_.py", .{
-        switch (t.os.tag) {
-            .linux => "linux",
-            .macos => "darwin",
-            .windows => "win32",
-            else => std.debug.panic("todo: populate PLATFORM for os '{s}'", .{@tagName(t.os.tag)}),
-        }
-    });
+    const sysconfigdata_filename = b.fmt("_sysconfigdata__{s}_.py", .{switch (t.os.tag) {
+        .linux => "linux",
+        .macos => "darwin",
+        .windows => "win32",
+        else => std.debug.panic("todo: populate PLATFORM for os '{s}'", .{@tagName(t.os.tag)}),
+    }});
 
     const wf = b.addWriteFiles();
     const sysconfigdata_file = wf.add(sysconfigdata_filename, sysconfigdata_contents);
@@ -847,7 +846,7 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
         .version = version,
         .libs = libs,
         .header = .{ .config_header = config_header },
-        .sysconfigdata = .{.path =sysconfigdata_file, .name=sysconfigdata_filename},
+        .sysconfigdata = .{ .path = sysconfigdata_file, .name = sysconfigdata_filename },
     };
 }
 
