@@ -840,8 +840,6 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
 
     const wf = b.addWriteFiles();
     const sysconfigdata_file = wf.add(sysconfigdata_filename, sysconfigdata_contents);
-    const install_step = b.addInstallFile(sysconfigdata_file, b.fmt("lib/python{s}/{s}", .{ version.libName(), sysconfigdata_filename }));
-    b.getInstallStep().dependOn(&install_step.step);
 
     return .{
         .version = version,
