@@ -494,7 +494,6 @@ fn addPythonExe(
             for (entry.value_ptr.compile_args) |compile_arg| switch (compile_arg) {
                 .source => |src| exe.root_module.addCSourceFile(.{
                     .file = upstream.path(b.fmt("Modules/{s}", .{src})),
-                    .flags = &flags_common,
                 }),
                 .include => |inc| exe.root_module.addIncludePath(upstream.path(b.fmt("{s}", .{inc}))),
             };
@@ -841,6 +840,8 @@ fn addPyconfig(b: *std.Build, version: Version, upstream: *std.Build.Dependency,
 
     const wf = b.addWriteFiles();
     const sysconfigdata_file = wf.add(sysconfigdata_filename, sysconfigdata_contents);
+    const install_step = b.addInstallFile(sysconfigdata_file, b.fmt("lib/python{s}/{s}", .{ version.libName(), sysconfigdata_filename }));
+    b.getInstallStep().dependOn(&install_step.step);
 
     return .{
         .version = version,
