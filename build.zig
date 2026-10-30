@@ -461,7 +461,6 @@ fn addPythonExe(
             for (entry.value_ptr.compile_args) |compile_arg| switch (compile_arg) {
                 .source => |src| exe.root_module.addCSourceFile(.{
                     .file = upstream.path(b.fmt("Modules/{s}", .{src})),
-                    .flags = &flags_common,
                 }),
                 .include => |inc| exe.root_module.addIncludePath(upstream.path(b.fmt("{s}", .{inc}))),
             };
