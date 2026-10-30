@@ -1149,7 +1149,6 @@ fn ci(
                 "-D_BSD_SOURCE", "-D_DEFAULT_SOURCE",   "-fwrapv",
                 "-std=c11",      "-fvisibility=hidden", "-DVPATH=\"\"",
             } });
-            b.installArtifact(hacl.?);
         } else hacl = null;
 
         const libs: Libs = .{
